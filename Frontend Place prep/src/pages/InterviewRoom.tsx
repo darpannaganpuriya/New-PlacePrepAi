@@ -107,6 +107,8 @@ const InterviewRoom = () => {
   const recognitionRef = useRef<any>(null);
   const shouldRestartRecognitionRef = useRef(false);
   const micSessionActiveRef = useRef(false);
+  const transcriptFinalRef = useRef("");
+  const transcriptInterimRef = useRef("");
   const micPermissionStreamRef = useRef<MediaStream | null>(null);
   const [warningCount, setWarningCount] = useState(0);
   const [showWarning, setShowWarning] = useState(false);
@@ -406,16 +408,23 @@ const InterviewRoom = () => {
       recognition.continuous = false;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
-      recognition.lang = "en-US";
+      recognition.lang = (navigator.language || "en-IN").startsWith("en") ? (navigator.language || "en-IN") : "en-IN";
       recognition.onresult = (event: any) => {
         let interim = "", final = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const t = event.results[i][0].transcript;
           if (event.results[i].isFinal) final += t; else interim += t;
         }
-        setTextInput(final || interim);
+        if (final) transcriptFinalRef.current = `${transcriptFinalRef.current} ${final}`.trim();
+        transcriptInterimRef.current = interim;
+        setTextInput(`${transcriptFinalRef.current} ${transcriptInterimRef.current}`.trim());
       };
       recognition.onend = () => {
+        if (transcriptInterimRef.current) {
+          transcriptFinalRef.current = `${transcriptFinalRef.current} ${transcriptInterimRef.current}`.trim();
+          transcriptInterimRef.current = "";
+          setTextInput(transcriptFinalRef.current);
+        }
         const shouldRestart = shouldRestartRecognitionRef.current || micSessionActiveRef.current;
         shouldRestartRecognitionRef.current = false;
         setIsListening(false);
@@ -457,11 +466,17 @@ const InterviewRoom = () => {
         setStatusMsg("⚠️ Voice input interrupted. Tap mic and continue.");
       };
       recognitionRef.current = recognition;
+    } else {
+      setVoiceSupported(false);
+      setStatusMsg("⚠️ Voice typing is not supported in this browser. Use Chrome/Edge on desktop.");
     }
   }, []);
 
   const toggleMic = async () => {
-    if (!recognitionRef.current) return;
+    if (!recognitionRef.current) {
+      setStatusMsg("⚠️ Voice typing unavailable. Open this app in latest Chrome or Edge.");
+      return;
+    }
     if (isListening) {
       micSessionActiveRef.current = false;
       shouldRestartRecognitionRef.current = false;
@@ -472,6 +487,12 @@ const InterviewRoom = () => {
     }
     else {
       window.speechSynthesis?.cancel(); setIsSpeaking(false); setTextInput("");
+      transcriptFinalRef.current = "";
+      transcriptInterimRef.current = "";
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatusMsg("⚠️ Microphone API not available in this browser/device.");
+        return;
+      }
       try {
         micPermissionStreamRef.current?.getTracks().forEach((t) => t.stop());
         micPermissionStreamRef.current = await navigator.mediaDevices.getUserMedia({
@@ -586,6 +607,8 @@ const InterviewRoom = () => {
     const answer = textInput.trim();
     if (!answer) { textareaRef.current?.focus(); return; }
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); }
+    transcriptFinalRef.current = "";
+    transcriptInterimRef.current = "";
     setMessages(prev => [...prev, { role: "user", text: answer }]);
     setTextInput("");
     isProcessingRef.current = true; setIsProcessing(true); setStatusMsg("⏳ AI is thinking...");
